@@ -1,0 +1,264 @@
+##
+## @file
+## @brief Touch Developer Makefile.
+## @author James Humphrey (humphreyj@somnisoft.com)
+##
+## This software has been placed into the public domain using CC0.
+##
+.PHONY: all clean doc test test_afl
+.SUFFIXES:
+
+BDIR = build
+
+AFL_FUZZ = afl-fuzz -m none
+
+CWARN += -Waggregate-return
+CWARN += -Wall
+CWARN += -Wbad-function-cast
+CWARN += -Wcast-align
+CWARN += -Wcast-qual
+CWARN += -Wdeclaration-after-statement
+CWARN += -Wdisabled-optimization
+CWARN += -Werror
+CWARN += -Wextra
+CWARN += -Wfatal-errors
+CWARN += -Wfloat-equal
+CWARN += -Wformat=2
+CWARN += -Wframe-larger-than=5000
+CWARN += -Winit-self
+CWARN += -Winline
+CWARN += -Winvalid-pch
+CWARN += -Wlarger-than=111000
+CWARN += -Wlong-long
+CWARN += -Wmissing-declarations
+CWARN += -Wmissing-include-dirs
+CWARN += -Wmissing-prototypes
+CWARN += -Wnested-externs
+CWARN += -Wold-style-definition
+CWARN += -Wpacked
+CWARN += -Wpedantic
+CWARN += -pedantic-errors
+CWARN += -Wredundant-decls
+CWARN += -Wshadow
+CWARN += -Wstack-protector
+CWARN += -Wstrict-aliasing
+CWARN += -Wstrict-prototypes
+CWARN += -Wswitch-default
+CWARN += -Wswitch-enum
+CWARN += -Wundef
+CWARN += -Wuninitialized
+CWARN += -Wunknown-pragmas
+CWARN += -Wunused-parameter
+CWARN += -Wvla
+CWARN += -Wwrite-strings
+
+CWARN.gcc   += -Wdouble-promotion
+CWARN.gcc   += -Wjump-misses-init
+CWARN.gcc   += -Wlogical-op
+CWARN.gcc   += -Wnormalized=nfkc
+CWARN.gcc   += -Wstack-usage=5000
+CWARN.gcc   += -Wsync-nand
+CWARN.gcc   += -Wtrampolines
+CWARN.gcc   += -Wunsafe-loop-optimizations
+CWARN.gcc   += -Wunsuffixed-float-constants
+CWARN.gcc   += -Wvector-operation-performance
+
+CWARN.clang += $(CWARN)
+CWARN.clang += -Weverything
+CWARN.clang += -fcomment-block-commands=retval
+CWARN.clang += -Wno-format-nonliteral
+
+CFLAGS += $(CWARN)
+CFLAGS += -fstack-protector-all
+CFLAGS += -fstrict-overflow
+CFLAGS += -std=c89
+CFLAGS += -MD
+CFLAGS += -D_POSIX_C_SOURCE=200809
+CFLAGS += -D_GNU_SOURCE
+
+CFLAGS.debug   += -g3
+CFLAGS.debug   += -fprofile-arcs -ftest-coverage
+CFLAGS.debug   += -DTOUCH_TEST
+CFLAGS.debug   += $(CWARN.gcc)
+
+CFLAGS.clang   += $(CFLAGS)
+CFLAGS.clang   += $(CWARN.clang)
+CFLAGS.clang   += -DTOUCH_TEST
+CFLAGS.clang   += -fsanitize=undefined
+CFLAGS.clang   += -fsanitize=address
+
+CFLAGS.release += -O3
+
+CFLAGS.afl     += -DTOUCH_TEST
+CFLAGS.afl     += -fsanitize=address
+CFLAGS.afl     += -D_POSIX_C_SOURCE=200809
+CFLAGS.afl     += -D_GNU_SOURCE
+
+LFLAGS.afl     += -fsanitize=undefined
+LFLAGS.afl     += -fsanitize=address
+LFLAGS.afl     += -lasan
+
+VFLAGS += -q
+VFLAGS += --error-exitcode=1
+VFLAGS += --gen-suppressions=yes
+VFLAGS += --num-callers=40
+
+VFLAGS_MEMCHECK += --tool=memcheck
+VFLAGS_MEMCHECK += --expensive-definedness-checks=yes
+VFLAGS_MEMCHECK += --track-origins=yes
+VFLAGS_MEMCHECK += --leak-check=full
+VFLAGS_MEMCHECK += --leak-resolution=high
+VALGRIND_MEMCHECK = valgrind $(VFLAGS) $(VFLAGS_MEMCHECK)
+
+GCOV    = gcov -b $(BDIR)/debug/touch.o
+LCOV    = lcov -o $(BDIR)/debug/lcov.info -c -d $(BDIR)/debug
+GENHTML = genhtml -o $(BDIR)/debug/lcov_html $(BDIR)/debug/lcov.info
+
+CC       = gcc
+CC_AFL   = afl-gcc
+CC.clang = clang
+
+AR.c.debug          = $(AR) -c -r $@ $^
+AR.c.release        = $(AR) -c -r $@ $^
+COMPILE.c.afl       = $(CC_AFL) $(CFLAGS.afl) -c -o $@ $<
+COMPILE.c.debug     = $(CC) $(CFLAGS) $(CFLAGS.debug) -c -o $@ $<
+COMPILE.c.release   = $(CC) $(CFLAGS) $(CFLAGS.release) -c -o $@ $<
+COMPILE.c.clang     = $(CC.clang) $(CFLAGS.clang) -c -o $@ $<
+LINK.c.afl          = $(CC_AFL) $(LFLAGS.afl) -o $@ $^
+LINK.c.debug        = $(CC) $(CFLAGS) $(CFLAGS.debug) -o $@ $^
+LINK.c.release      = $(CC) $(CFLAGS) $(CFLAGS.release) -o $@ $^
+LINK.c.clang        = $(CC.clang) $(LFLAGS) $(CFLAGS.clang) -o $@ $^
+MKDIR               = mkdir -p $@
+CP                  = cp $< $@
+
+SCAN_BUILD_TOUCH = scan-build -maxloop 100                \
+                              -o $(BDIR)/scan-build-touch \
+                              --status-bugs               \
+                   clang $(CFLAGS.clang) -UTOUCH_TEST     \
+                         -o $(BDIR)/debug/scan-build-touch src/touch.c test/seams.c
+
+all: $(BDIR)/debug/test          \
+     $(BDIR)/debug/clang_test    \
+     $(BDIR)/debug/fuzz-driver   \
+     $(BDIR)/release/touch       \
+     $(BDIR)/release/file-time   \
+     $(BDIR)/doc/html/index.html
+
+clean:
+	-sudo /bin/umount $(BDIR)
+	rm -rf $(BDIR)
+
+doc $(BDIR)/doc/html/index.html: src/touch.c     \
+	                               test/seams.h    \
+	                               test/seams.c    \
+	                               test/test.h     \
+	                               test/test.c     \
+	                               $(BDIR)/doc.cfg
+	doxygen $(BDIR)/doc.cfg
+
+$(BDIR)/doc.cfg: | $(BDIR)
+	doxygen -s -g $@
+	sed -i -e 's/PROJECT_NAME .*/PROJECT_NAME="touch"/'                     \
+	       -e 's/PROJECT_BRIEF .*/PROJECT_BRIEF="touch"/'                   \
+	       -e 's/OUTPUT_DIRECTORY .*/OUTPUT_DIRECTORY="build\/doc"/'        \
+	       -e 's/OPTIMIZE_OUTPUT_FOR_C .*/OPTIMIZE_OUTPUT_FOR_C=YES/'       \
+	       -e 's/EXTRACT_PRIVATE .*/EXTRACT_PRIVATE=YES/'                   \
+	       -e 's/EXTRACT_STATIC .*/EXTRACT_STATIC=YES/'                     \
+	       -e 's/EXTRACT_LOCAL_METHODS .*/EXTRACT_LOCAL_METHODS=YES/'       \
+	       -e 's/STRICT_PROTO_MATCHING .*/STRICT_PROTO_MATCHING=YES/'       \
+	       -e 's/WARN_NO_PARAMDOC .*/WARN_NO_PARAMDOC=YES/'                 \
+	       -e 's/WARN_AS_ERROR .*/WARN_AS_ERROR=YES/'                       \
+	       -e 's/INPUT .*/INPUT=src\/touch.c               \\\
+	                            test\/file-time.c          \\\
+	                            test\/fuzz-driver.c        \\\
+	                            test\/seams.h              \\\
+	                            test\/seams.c              \\\
+	                            test\/test.h               \\\
+	                            test\/test.c/'                              \
+	       -e 's/FILE_PATTERNS .*/FILE_PATTERNS=/'                          \
+	       -e 's/SOURCE_BROWSER .*/SOURCE_BROWSER=YES/'                     \
+	       -e 's/INLINE_SOURCES .*/INLINE_SOURCES=YES/'                     \
+	       -e 's/REFERENCED_BY_RELATION .*/REFERENCED_BY_RELATION=YES/'     \
+	       -e 's/REFERENCES_RELATION .*/REFERENCES_RELATION=YES/'           \
+	       -e 's/HTML_DYNAMIC_SECTIONS .*/HTML_DYNAMIC_SECTIONS=YES/'       \
+	       -e 's/TOC_EXPAND .*/TOC_EXPAND=YES/'                             \
+	       -e 's/GENERATE_TREEVIEW .*/GENERATE_TREEVIEW=YES/'               \
+	       -e 's/GENERATE_LATEX .*/GENERATE_LATEX=NO/'                      \
+	       -e 's/PREDEFINED .*/PREDEFINED=TOUCH_TEST/'                      \
+	       -e 's/UML_LOOK .*/UML_LOOK=YES/'                                 \
+	       -e 's/UML_LIMIT_NUM_FIELDS .*/UML_LIMIT_NUM_FIELDS=0/'           \
+	       -e 's/TEMPLATE_RELATIONS .*/TEMPLATE_RELATIONS=YES/'             \
+	       -e 's/CALL_GRAPH .*/CALL_GRAPH=YES/'                             \
+	       -e 's/CALLER_GRAPH .*/CALLER_GRAPH=YES/'                         \
+	       -e 's/DOT_MULTI_TARGETS .*/DOT_MULTI_TARGETS=YES/' $@
+
+test: all
+	$(SCAN_BUILD_TOUCH)
+	$(VALGRIND_MEMCHECK) $(BDIR)/debug/test
+	$(BDIR)/debug/clang_test
+	$(GCOV)
+	$(LCOV)
+	$(GENHTML)
+	xdg-open $(BDIR)/debug/lcov_html/src/touch.c.gcov.html
+
+test_afl: all
+	$(AFL_FUZZ) -i test/fuzz-test-cases            \
+              -o $(BDIR)/debug/afl-fuzz-findings \
+                 $(BDIR)/debug/fuzz-driver
+
+-include $(shell find $(BDIR)/ -name "*.d" 2> /dev/null)
+
+$(BDIR)/release: | $(BDIR)
+	$(MKDIR)
+
+$(BDIR)/debug: | $(BDIR)
+	$(MKDIR)
+
+$(BDIR):
+	$(MKDIR)
+	sudo /bin/mount -o size=200M -t tmpfs none $(BDIR)
+
+$(BDIR)/debug/touch.o: src/touch.c | $(BDIR)/debug
+	$(COMPILE.c.debug)
+
+$(BDIR)/release/touch: $(BDIR)/release/touch.o
+	$(LINK.c.release)
+$(BDIR)/release/touch.o: src/touch.c | $(BDIR)/release
+	$(COMPILE.c.release)
+
+$(BDIR)/release/file-time: $(BDIR)/release/file-time.o
+	$(LINK.c.release)
+$(BDIR)/release/file-time.o: test/file-time.c | $(BDIR)/release
+	$(COMPILE.c.release)
+
+$(BDIR)/debug/fuzz-driver: $(BDIR)/debug/fuzz-driver.o \
+                           $(BDIR)/debug/fuzz-touch.o  \
+                           $(BDIR)/debug/fuzz-seams.o
+	$(LINK.c.afl)
+$(BDIR)/debug/fuzz-driver.o: test/fuzz-driver.c | $(BDIR)/debug
+	$(COMPILE.c.afl)
+$(BDIR)/debug/fuzz-touch.o: src/touch.c | $(BDIR)/debug
+	$(COMPILE.c.afl)
+$(BDIR)/debug/fuzz-seams.o: test/seams.c | $(BDIR)/debug
+	$(COMPILE.c.afl)
+
+$(BDIR)/debug/test: $(BDIR)/debug/seams.o \
+                    $(BDIR)/debug/test.o  \
+                    $(BDIR)/debug/touch.o
+	$(LINK.c.debug) -lgcov
+$(BDIR)/debug/test.o: test/test.c | $(BDIR)/debug
+	$(COMPILE.c.debug)
+$(BDIR)/debug/seams.o: test/seams.c | $(BDIR)/debug
+	$(COMPILE.c.debug)
+
+$(BDIR)/debug/clang_test: $(BDIR)/debug/clang_seams.o  \
+                          $(BDIR)/debug/clang_touch.o  \
+                          $(BDIR)/debug/clang_test.o
+	$(LINK.c.clang)
+$(BDIR)/debug/clang_seams.o: test/seams.c | $(BDIR)/debug
+	$(COMPILE.c.clang)
+$(BDIR)/debug/clang_touch.o: src/touch.c | $(BDIR)/debug
+	$(COMPILE.c.clang)
+$(BDIR)/debug/clang_test.o: test/test.c | $(BDIR)/debug
+	$(COMPILE.c.clang)
+
